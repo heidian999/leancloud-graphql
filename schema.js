@@ -1,6 +1,20 @@
-const {GraphQLSchema, GraphQLObjectType, GraphQLScalarType} = require('graphql');
-const {GraphQLEnumType, GraphQLInputObjectType, GraphQLList} = require('graphql')
-const {GraphQLID, GraphQLString, GraphQLBoolean, GraphQLInt, GraphQLFloat} = require('graphql');
+const {
+  GraphQLSchema,
+  GraphQLObjectType,
+  GraphQLScalarType
+} = require('graphql');
+const {
+  GraphQLEnumType,
+  GraphQLInputObjectType,
+  GraphQLList
+} = require('graphql');
+const {
+  GraphQLID,
+  GraphQLString,
+  GraphQLBoolean,
+  GraphQLInt,
+  GraphQLFloat
+} = require('graphql');
 const {
   connectionArgs,
   connectionDefinitions,
@@ -10,8 +24,8 @@ const {
   globalIdField,
   mutationWithClientMutationId,
   nodeDefinitions,
-  toGlobalId,
-} = require('graphql-relay')
+  toGlobalId
+} = require('graphql-relay');
 const request = require('request-promise');
 const AV = require('leancloud-storage');
 const _ = require('lodash');
@@ -62,7 +76,7 @@ const LCTypeMapping = {
   Array: LCArray,
   File: LCFile,
   GeoPoint: LCGeoPoint
-}
+};
 
 module.exports = function buildSchema({appId, appKey, masterKey}) {
   return request({
@@ -72,218 +86,267 @@ module.exports = function buildSchema({appId, appKey, masterKey}) {
       'X-LC-Id': appId,
       'X-LC-Key': `${masterKey},master`
     }
-  }).then( cloudSchemas => {
-    return _.mapValues(cloudSchemas, (schema, className) => {
-      return _.omitBy(schema, (definition, field) => {
-        if (field.startsWith('__')) {
-          console.error(`[leancloud-graphql] Ignored invalid GraphQL field name \`${className}.${field}\``);
-          return true;
-        }
-      });
-    });
-  }).then( cloudSchemas => {
-    const classes = _.mapValues(cloudSchemas, (schema, className) => {
-      return AV.Object.extend(className);
-    });
-
-    const classSchemasFieldsThunk = _.mapValues(cloudSchemas, (schema, className) => {
-      return () => {
-        const fields = _.mapValues(schema, (definition, field) => {
-          if (definition.type === 'Relation') {
-            return {
-              type: new GraphQLList(classSchemas[definition.className]),
-              args: querySchemas[classSchemas[definition.className]].args,
-              resolve: (source, args, {authOptions}, info) => {
-                return addArgumentsToQuery(source.relation(field).query(), args).find(authOptions);
-              }
-            }
-          } else if (definition.type === 'Pointer') {
-            return {
-              type: classSchemas[definition.className],
-              resolve: (source, args, {authOptions}, info) => {
-                return new AV.Query(definition.className).get(source.get(field).id, authOptions);
-              }
-            }
-          } else {
-            return {
-              type: LCTypeMapping[definition.type],
-              resolve: (source, args, context, info) => {
-                return source.get(field);
-              }
-            }
+  })
+    .then((cloudSchemas) => {
+      return _.mapValues(cloudSchemas, (schema, className) => {
+        return _.omitBy(schema, (definition, field) => {
+          if (field.startsWith('__')) {
+            console.error(
+              `[leancloud-graphql] Ignored invalid GraphQL field name \`${className}.${field}\``
+            );
+            return true;
           }
         });
+      });
+    })
+    .then((cloudSchemas) => {
+      const classes = _.mapValues(cloudSchemas, (schema, className) => {
+        return AV.Object.extend(className);
+      });
 
-        fields.objectId = {
-          type: GraphQLID,
-          resolve: (source, args, context, info) => {
-            return source.id;
-          }
+      const classSchemasFieldsThunk = _.mapValues(
+        cloudSchemas,
+        (schema, className) => {
+          return () => {
+            const fields = _.mapValues(schema, (definition, field) => {
+              if (definition.type === 'Relation') {
+                return {
+                  type: new GraphQLList(classSchemas[definition.className]),
+                  args: querySchemas[classSchemas[definition.className]].args,
+                  resolve: (source, args, {authOptions}, info) => {
+                    return addArgumentsToQuery(
+                      source.relation(field).query(),
+                      args
+                    ).find(authOptions);
+                  }
+                };
+              } else if (definition.type === 'Pointer') {
+                return {
+                  type: classSchemas[definition.className],
+                  resolve: (source, args, {authOptions}, info) => {
+                    return new AV.Query(definition.className).get(
+                      source.get(field).id,
+                      authOptions
+                    );
+                  }
+                };
+              } else {
+                return {
+                  type: LCTypeMapping[definition.type],
+                  resolve: (source, args, context, info) => {
+                    return source.get(field);
+                  }
+                };
+              }
+            });
+
+            fields.objectId = {
+              type: GraphQLID,
+              resolve: (source, args, context, info) => {
+                return source.id;
+              }
+            };
+
+            _.forEach(cloudSchemas, (schema, sourceClassName) => {
+              _.forEach(schema, (definition, sourceField) => {
+                if (definition.className === className) {
+                  debug(
+                    `Add reverse relationship: ${sourceField}Of${sourceClassName} on ${className}`
+                  );
+
+                  fields[`${sourceField}Of${sourceClassName}`] = {
+                    type: new GraphQLList(classSchemas[sourceClassName]),
+                    args: querySchemas[classSchemas[sourceClassName]].args,
+                    resolve: (source, args, {authOptions}, info) => {
+                      return addArgumentsToQuery(
+                        new AV.Query(sourceClassName),
+                        args
+                      )
+                        .equalTo(sourceField, source)
+                        .find(authOptions);
+                    }
+                  };
+                }
+              });
+            });
+
+            return fields;
+          };
+        }
+      );
+
+      const classSchemas = _.mapValues(cloudSchemas, (schema, className) => {
+        return new GraphQLObjectType({
+          name: className,
+          fields: classSchemasFieldsThunk[className]
+        });
+      });
+
+      const querySchemas = _.mapValues(cloudSchemas, (schema, className) => {
+        const FieldsEnum = new GraphQLEnumType({
+          name: `${className}Fields`,
+          values: _.mapValues(schema, (definition, field) => {
+            return {value: field};
+          })
+        });
+
+        const createFieldsInputType = function(argName, innerType) {
+          return new GraphQLInputObjectType({
+            name: `${className}${_.upperFirst(argName)}Argument`,
+            fields: _.pickBy(
+              _.mapValues(schema, (definition, field) => {
+                if (innerType) {
+                  return {type: innerType};
+                } else if (LCTypeMapping[definition.type]) {
+                  return {
+                    type: LCTypeMapping[definition.type]
+                  };
+                } else {
+                  return null;
+                }
+              })
+            )
+          });
         };
 
-        _.forEach(cloudSchemas, (schema, sourceClassName) => {
-          _.forEach(schema, (definition, sourceField) => {
-            if (definition.className === className) {
-              debug(`Add reverse relationship: ${sourceField}Of${sourceClassName} on ${className}`);
-
-              fields[`${sourceField}Of${sourceClassName}`] = {
-                type: new GraphQLList(classSchemas[sourceClassName]),
-                args: querySchemas[classSchemas[sourceClassName]].args,
-                resolve: (source, args, {authOptions}, info) => {
-                  return addArgumentsToQuery(new AV.Query(sourceClassName), args).equalTo(sourceField, source).find(authOptions);
-                }
-              };
+        return {
+          name: className,
+          type: new GraphQLList(classSchemas[className]),
+          args: {
+            objectId: {
+              type: GraphQLID
+            },
+            ascending: {
+              type: FieldsEnum
+            },
+            descending: {
+              type: FieldsEnum
+            },
+            limit: {
+              type: GraphQLInt
+            },
+            equalTo: {
+              type: createFieldsInputType('equalTo')
+            },
+            greaterThan: {
+              type: createFieldsInputType('greaterThan')
+            },
+            greaterThanOrEqualTo: {
+              type: createFieldsInputType('greaterThanOrEqualTo')
+            },
+            lessThan: {
+              type: createFieldsInputType('lessThan')
+            },
+            lessThanOrEqualTo: {
+              type: createFieldsInputType('lessThanOrEqualTo')
+            },
+            containedIn: {
+              type: createFieldsInputType(
+                'containedIn',
+                new GraphQLList(GraphQLID)
+              )
+            },
+            containsAll: {
+              type: createFieldsInputType(
+                'containsAll',
+                new GraphQLList(GraphQLID)
+              )
+            },
+            exists: {
+              type: createFieldsInputType('exists', GraphQLBoolean)
             }
-          });
-        });
-
-        return fields;
-      }
-    });
-
-    const classSchemas = _.mapValues(cloudSchemas, (schema, className) => {
-      return new GraphQLObjectType({
-        name: className,
-        fields: classSchemasFieldsThunk[className]
-      });
-    });
-
-    const querySchemas = _.mapValues(cloudSchemas, (schema, className) => {
-      const FieldsEnum = new GraphQLEnumType({
-        name: `${className}Fields`,
-        values: _.mapValues(schema, (definition, field) => {
-          return {value: field};
-        })
-      });
-
-      const createFieldsInputType = function(argName, innerType) {
-        return new GraphQLInputObjectType({
-          name: `${className}${_.upperFirst(argName)}Argument`,
-          fields: _.pickBy(_.mapValues(schema, (definition, field) => {
-            if (innerType) {
-              return {type: innerType};
-            } else if (LCTypeMapping[definition.type]) {
-              return {
-                type: LCTypeMapping[definition.type]
-              };
-            } else {
-              return null;
-            }
-          }))
-        });
-      };
-
-      return {
-        name: className,
-        type: new GraphQLList(classSchemas[className]),
-        args: {
-          objectId: {
-            type: GraphQLID
           },
-          ascending: {
-            type: FieldsEnum
-          },
-          descending: {
-            type: FieldsEnum
-          },
-          limit: {
-            type: GraphQLInt
-          },
-          equalTo: {
-            type: createFieldsInputType('equalTo')
-          },
-          greaterThan: {
-            type: createFieldsInputType('greaterThan')
-          },
-          greaterThanOrEqualTo: {
-            type: createFieldsInputType('greaterThanOrEqualTo')
-          },
-          lessThan: {
-            type: createFieldsInputType('lessThan')
-          },
-          lessThanOrEqualTo: {
-            type: createFieldsInputType('lessThanOrEqualTo')
-          },
-          containedIn: {
-            type: createFieldsInputType('containedIn', new GraphQLList(GraphQLID))
-          },
-          containsAll: {
-            type: createFieldsInputType('containsAll', new GraphQLList(GraphQLID))
-          },
-          exists: {
-            type: createFieldsInputType('exists', GraphQLBoolean)
+          resolve: (source, args, {authOptions}, info) => {
+            return addArgumentsToQuery(new AV.Query(className), args).find(
+              authOptions
+            );
           }
-        },
-        resolve: (source, args, {authOptions}, info) => {
-          return addArgumentsToQuery(new AV.Query(className), args).find(authOptions);
-        }
-      };
-    });
+        };
+      });
 
-    const queryConnectionSchemas = _.mapValues(cloudSchemas, (schema, className) => {
-const {
-  connectionType,
-  edgeType,
-} = connectionDefinitions({
-  name: className,
-  nodeType: classSchemas[className],
-});
-
-
-              const args = _.assign({}, querySchemas[classSchemas[className]].args, connectionArgs)
-
-
-      return {
-        name: `${className}Connection`,
-        type: connectionType,
-        args: args,
-        resolve: (source, args, {authOptions}, info) => {
-          return addArgumentsToQuery(new AV.Query(className), args).find(authOptions);
-        }
-      };
-
-    });
-
-    return new GraphQLSchema({
-      query: new GraphQLObjectType({
-        name: 'LeanStorage',
-        fields: _.assign({}, querySchemas, queryConnectionSchemas)
-      }),
-
-      mutation: new GraphQLObjectType({
-        name: 'LeanStorageMutation',
-        fields: _.mapValues(cloudSchemas, (schema, className) => {
-          return {
+      const queryConnectionSchemas = _.mapValues(
+        cloudSchemas,
+        (schema, className) => {
+          const {connectionType, edgeType} = connectionDefinitions({
             name: className,
-            type: classSchemas[className],
-            args: _.omitBy(classSchemasFieldsThunk[className](), value => {
-              return value.type instanceof GraphQLList || value.type instanceof GraphQLObjectType;
-            }),
-            resolve: (source, args, {authOptions}, info) => {
-              const saveOptions = _.extend({fetchWhenSave: true}, authOptions)
+            nodeType: classSchemas[className]
+          });
 
-              if (args.objectId) {
-                return AV.Object.createWithoutData(className, args.objectId).save(_.omit(args, 'objectId'), saveOptions);
-              } else {
-                return new classes[className]().save(args, saveOptions);
-              }
+          const args = _.assign(
+            {},
+            querySchemas[classSchemas[className]].args,
+            connectionArgs
+          );
+
+          return {
+            name: `${className}Connection`,
+            type: connectionType,
+            args: args,
+            resolve: (source, args, {authOptions}, info) => {
+              return addArgumentsToQuery(new AV.Query(className), args).find(
+                authOptions
+              );
             }
-          }
+          };
+        }
+      );
+
+      return new GraphQLSchema({
+        query: new GraphQLObjectType({
+          name: 'LeanStorage',
+          fields: _.assign({}, querySchemas, queryConnectionSchemas)
+        }),
+
+        mutation: new GraphQLObjectType({
+          name: 'LeanStorageMutation',
+          fields: _.mapValues(cloudSchemas, (schema, className) => {
+            return {
+              name: className,
+              type: classSchemas[className],
+              args: _.omitBy(classSchemasFieldsThunk[className](), (value) => {
+                return (
+                  value.type instanceof GraphQLList ||
+                  value.type instanceof GraphQLObjectType
+                );
+              }),
+              resolve: (source, args, {authOptions}, info) => {
+                const saveOptions = _.extend(
+                  {fetchWhenSave: true},
+                  authOptions
+                );
+
+                if (args.objectId) {
+                  return AV.Object.createWithoutData(
+                    className,
+                    args.objectId
+                  ).save(_.omit(args, 'objectId'), saveOptions);
+                } else {
+                  return new classes[className]().save(args, saveOptions);
+                }
+              }
+            };
+          })
         })
-      })
+      });
     });
-  });
 };
 
 function addArgumentsToQuery(query, args) {
-  ['ascending', 'descending', 'limit'].forEach( method => {
+  ['ascending', 'descending', 'limit'].forEach((method) => {
     if (args[method] !== undefined) {
       query[method](args[method]);
     }
   });
 
-  ['equalTo', 'greaterThan', 'greaterThanOrEqualTo', 'lessThan',
-   'lessThanOrEqualTo', 'containedIn', 'containsAll'].forEach( method => {
+  [
+    'equalTo',
+    'greaterThan',
+    'greaterThanOrEqualTo',
+    'lessThan',
+    'lessThanOrEqualTo',
+    'containedIn',
+    'containsAll'
+  ].forEach((method) => {
     if (_.isObject(args[method])) {
       _.forEach(args[method], (value, key) => {
         query[method](key, value);
