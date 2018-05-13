@@ -1,6 +1,17 @@
 const {GraphQLSchema, GraphQLObjectType, GraphQLScalarType} = require('graphql');
 const {GraphQLEnumType, GraphQLInputObjectType, GraphQLList} = require('graphql')
 const {GraphQLID, GraphQLString, GraphQLBoolean, GraphQLInt, GraphQLFloat} = require('graphql');
+const {
+  connectionArgs,
+  connectionDefinitions,
+  connectionFromArray,
+  cursorForObjectInConnection,
+  fromGlobalId,
+  globalIdField,
+  mutationWithClientMutationId,
+  nodeDefinitions,
+  toGlobalId,
+} = require('graphql-relay')
 const request = require('request-promise');
 const AV = require('leancloud-storage');
 const _ = require('lodash');
@@ -209,10 +220,34 @@ module.exports = function buildSchema({appId, appKey, masterKey}) {
       };
     });
 
+    const queryConnectionSchemas = _.mapValues(cloudSchemas, (schema, className) => {
+const {
+  connectionType,
+  edgeType,
+} = connectionDefinitions({
+  name: className,
+  nodeType: classSchemas[className],
+});
+
+
+              const args = _.assign({}, querySchemas[classSchemas[className]].args, connectionArgs)
+
+
+      return {
+        name: `${className}Connection`,
+        type: connectionType,
+        args: args,
+        resolve: (source, args, {authOptions}, info) => {
+          return addArgumentsToQuery(new AV.Query(className), args).find(authOptions);
+        }
+      };
+
+    });
+
     return new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'LeanStorage',
-        fields: querySchemas
+        fields: _.assign({}, querySchemas, queryConnectionSchemas)
       }),
 
       mutation: new GraphQLObjectType({
