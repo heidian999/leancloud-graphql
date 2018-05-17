@@ -19,6 +19,7 @@ const {
   connectionArgs,
   connectionDefinitions,
   connectionFromArray,
+  connectionFromPromisedArray,
   cursorForObjectInConnection,
   fromGlobalId,
   globalIdField,
@@ -283,9 +284,9 @@ module.exports = function buildSchema({appId, appKey, masterKey}) {
             type: connectionType,
             args: args,
             resolve: (source, args, {authOptions}, info) => {
-              return addArgumentsToQuery(new AV.Query(className), args).find(
+              return connectionFromPromisedArray(addArgumentsToQuery(new AV.Query(className), args).find(
                 authOptions
-              );
+              ), args);
             }
           };
         }
