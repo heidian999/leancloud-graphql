@@ -264,7 +264,7 @@ module.exports = function buildSchema({appId, appKey, masterKey}) {
         };
       });
 
-      const queryConnectionSchemas = _.mapValues(
+      const queryConnectionSchemas = _.mapKeys(_.mapValues(
         cloudSchemas,
         (schema, className) => {
           const {connectionType, edgeType} = connectionDefinitions({
@@ -289,7 +289,10 @@ module.exports = function buildSchema({appId, appKey, masterKey}) {
             }
           };
         }
-      );
+      ), (schema, className) => {
+      return `${className}Connection`
+      });
+;
 
       return new GraphQLSchema({
         query: new GraphQLObjectType({
