@@ -148,6 +148,21 @@ module.exports = function buildSchema({appId, appKey, masterKey}) {
               }
             };
 
+            _.forEach(schema, (definition, field) => {
+              if (definition.type === 'Relation') {
+                  fields[`${field}Count`] = {
+                    type: GraphQLInt,
+                  args: querySchemas[classSchemas[definition.className]].args,
+                  resolve: (source, args, {authOptions}, info) => {
+                    return addArgumentsToQuery(
+                      source.relation(field).query(),
+                      args
+                    ).count(authOptions);
+                  }
+                };
+              } 
+            });
+                
             _.forEach(cloudSchemas, (schema, sourceClassName) => {
               _.forEach(schema, (definition, sourceField) => {
                 if (definition.className === className) {
