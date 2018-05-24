@@ -150,8 +150,8 @@ module.exports = function buildSchema({appId, appKey, masterKey}) {
 
             _.forEach(schema, (definition, field) => {
               if (definition.type === 'Relation') {
-                  fields[`${field}Count`] = {
-                    type: GraphQLInt,
+                fields[`${field}Count`] = {
+                  type: GraphQLInt,
                   args: querySchemas[classSchemas[definition.className]].args,
                   resolve: (source, args, {authOptions}, info) => {
                     return addArgumentsToQuery(
@@ -160,9 +160,9 @@ module.exports = function buildSchema({appId, appKey, masterKey}) {
                     ).count(authOptions);
                   }
                 };
-              } 
+              }
             });
-                
+
             _.forEach(cloudSchemas, (schema, sourceClassName) => {
               _.forEach(schema, (definition, sourceField) => {
                 if (definition.className === className) {
@@ -280,9 +280,8 @@ module.exports = function buildSchema({appId, appKey, masterKey}) {
         };
       });
 
-      const queryConnectionSchemas = _.mapKeys(_.mapValues(
-        cloudSchemas,
-        (schema, className) => {
+      const queryConnectionSchemas = _.mapKeys(
+        _.mapValues(cloudSchemas, (schema, className) => {
           const {connectionType, edgeType} = connectionDefinitions({
             name: className,
             nodeType: classSchemas[className]
@@ -299,17 +298,19 @@ module.exports = function buildSchema({appId, appKey, masterKey}) {
             type: connectionType,
             args: args,
             resolve: (source, args, {authOptions}, info) => {
-              return connectionFromPromisedArray(addArgumentsToQuery(new AV.Query(className), args).find(
-                authOptions
-              ), args);
+              return connectionFromPromisedArray(
+                addArgumentsToQuery(new AV.Query(className), args).find(
+                  authOptions
+                ),
+                args
+              );
             }
           };
+        }),
+        (schema, className) => {
+          return `${className}Connection`;
         }
-      ), (schema, className) => {
-      return `${className}Connection`
-      });
-;
-
+      );
       return new GraphQLSchema({
         query: new GraphQLObjectType({
           name: 'LeanStorage',
