@@ -352,13 +352,14 @@ module.exports = function buildSchema({appId, appKey, masterKey}) {
 };
 
 function addArgumentsToQuery(query, args) {
-  ['ascending', 'descending',].forEach((method) => {
-    if (args[method] !== undefined) {args[method].forEach((arg) => {
-      query[`add${method.charAt(0).toUpperCase()}${method.slice(1)}`](arg);
-  });
+  ['ascending', 'descending'].forEach((method) => {
+    if (args[method] !== undefined) {
+      args[method].forEach((arg) => {
+        query[`add${method.charAt(0).toUpperCase()}${method.slice(1)}`](arg);
+      });
     }
   });
- ['limit'].forEach((method) => {
+  ['limit'].forEach((method) => {
     if (args[method] !== undefined) {
       query[method](args[method]);
     }
